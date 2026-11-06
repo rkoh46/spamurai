@@ -5,6 +5,7 @@ import UserNotifications
 /// Tells the owner about a call and takes the answer back.
 /// imessage: an iMessage to the owner's own number; the owner replies 1 or 2 in that thread.
 /// mac: a notification on this Mac with File and Ignore buttons.
+/// none: nothing is sent; the owner opens Callwatch and answers there.
 final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     let settings: Settings
     let store: Store
@@ -31,6 +32,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     /// `uid` set means the message asks about that call, so a Mac notification carries the answer buttons.
     @MainActor
     func send(_ text: String, uid: String? = nil) async throws {
+        if settings.notifyKind == "none" { return }
         if settings.notifyKind == "imessage" {
             try iMessage(text)
             return

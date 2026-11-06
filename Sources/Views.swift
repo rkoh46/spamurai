@@ -379,14 +379,14 @@ struct SetupView: View {
 
     private var detailsDone: Bool { Settings.requiredMe.allSatisfy { !(settings.me[$0] ?? "").trimmingCharacters(in: .whitespaces).isEmpty } }
     private var answersDone: Bool { Settings.answerKeys.allSatisfy { !(settings.answers[$0] ?? "").isEmpty } && settings.agreed }
-    private var askingDone: Bool { settings.notifyKind == "mac" || hasThread }
+    private var askingDone: Bool { settings.notifyKind != "imessage" || hasThread }
 
     var body: some View {
         Form {
             Section {
                 step(detailsDone, "Your details", "Fill in your name, address, email and cell number below.")
                 step(answersDone, "Your answers about the calls", "Choose the four answers and switch on the agreement.")
-                step(askingDone, "A way to ask you", "Send yourself one iMessage from this Mac so Callwatch has a thread to write to.")
+                step(askingDone, "How Callwatch asks you", "Send yourself one iMessage from this Mac, or choose another way under Asking you.")
                 step(engine.access == "ok", "Access to your calls", "Switch Callwatch on in Full Disk Access, then quit and reopen it.")
             } header: {
                 HStack(spacing: 12) {
@@ -449,6 +449,7 @@ struct SetupView: View {
                 Picker("Ask me with", selection: Binding(get: { settings.notifyKind }, set: { settings.notifyKind = $0; settings.save() })) {
                     Text("An iMessage to myself").tag("imessage")
                     Text("A notification on this Mac").tag("mac")
+                    Text("Nothing, I'll check Callwatch").tag("none")
                 }
                 if settings.notifyKind == "imessage" {
                     TextField("My iMessage address", text: Binding(get: { settings.imessageTo }, set: { settings.imessageTo = $0; settings.save(); hasThread = engine.notifier.selfThread() != nil }),
@@ -461,16 +462,19 @@ struct SetupView: View {
                         }
                     }
                 }
-                LabeledContent(engine.testOutcome.isEmpty ? testResult : engine.testOutcome) {
-                    Button("Send a Test Question") {
-                        engine.testOutcome = ""
-                        Task { testResult = await engine.sendTestQuestion() }
-                    }.disabled(settings.notifyKind == "imessage" && !hasThread)
+                if settings.notifyKind != "none" {
+                    LabeledContent(engine.testOutcome.isEmpty ? testResult : engine.testOutcome) {
+                        Button("Send a Test Question") {
+                            engine.testOutcome = ""
+                            Task { testResult = await engine.sendTestQuestion() }
+                        }.disabled(settings.notifyKind == "imessage" && !hasThread)
+                    }
                 }
             } header: { head("Asking you", "message.fill", .green) } footer: {
                 Text(settings.notifyKind == "imessage"
                      ? "The question reaches your iPhone as a message from yourself. Reply 1 to file or 2 to ignore. Leave the address empty to use your cell number. The test asks about a made-up call and files nothing."
-                     : "The notification has File and Ignore buttons. The test asks about a made-up call and files nothing.")
+                     : settings.notifyKind == "mac" ? "The notification has File and Ignore buttons. The test asks about a made-up call and files nothing."
+                     : "Callwatch stays quiet. Callers it is unsure about wait on the Calls page, where you file or ignore them. The menu bar icon shows how many are waiting.")
             }
 
             Section {

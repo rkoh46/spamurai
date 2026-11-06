@@ -18,7 +18,7 @@ that number, then either files a complaint or asks you first.
 
 ## Install
 
-1. Download `Callwatch-1.0.dmg` from the [Releases page](https://github.com/rkoh46/callwatch/releases).
+1. Download `Callwatch-1.1.dmg` from the [Releases page](https://github.com/rkoh46/callwatch/releases).
 2. Open it and drag Callwatch to Applications.
 3. Open Callwatch. It is not signed with a paid Apple developer certificate, so the first time macOS
    says it cannot verify the app: open System Settings, Privacy & Security, scroll down and press
@@ -28,10 +28,11 @@ The app opens on its Setup page, with a checklist at the top:
 
 1. **Your details.** The FCC requires a name, address, email and phone number on every complaint.
 2. **Your answers about the calls.** The form asks what kind of call it was. You choose the answers once.
-3. **A way to ask you.** An iMessage to yourself (reply `1` to file, `2` to ignore), or a notification
-   on the Mac with File and Ignore buttons. For iMessage, send yourself one message from the Mac
-   first; Setup has a button for it. **Send a Test Question** proves the round trip without filing
-   anything.
+3. **How Callwatch asks you.** An iMessage to yourself (reply `1` to file, `2` to ignore), a
+   notification on the Mac with File and Ignore buttons, or nothing at all: callers it is unsure about
+   then wait on the Calls page until you file or ignore them there. For iMessage, send yourself one
+   message from the Mac first; Setup has a button for it. **Send a Test Question** proves the round
+   trip without filing anything.
 4. **Access to your calls.** macOS only lets apps with Full Disk Access read the call log and your
    replies in Messages. Setup opens the right list; switch Callwatch on, then quit and reopen it.
 
@@ -49,7 +50,7 @@ With Xcode installed:
     ./build.sh
     open ~/Applications/Callwatch.app
 
-`./release.sh 1.0` makes the DMG in `dist/`.
+`./release.sh 1.1` makes the DMG in `dist/`.
 
 ## How it decides
 

@@ -16,7 +16,7 @@ final class Settings: ObservableObject {
     @Published var agreed = false          // the owner accepted that complaints carry the perjury statement
     @Published var autoFile = false        // file likely robocalls without asking
     @Published var graceMinutes = 30       // wait this long before filing a likely robocall, so the owner can stop it (0 = file at once)
-    @Published var notifyKind = "imessage" // imessage (to the owner's own number) or mac
+    @Published var notifyKind = "imessage" // imessage (to the owner's own address), mac (a notification), or none (the owner checks the app)
     @Published var imessageTo = ""         // the owner's iMessage address when it is not the cell number (an Apple Account email, say)
     var pollSeconds = 60.0
     var repeatWindowHours = 24.0
@@ -38,7 +38,8 @@ final class Settings: ObservableObject {
         autoFile = d["auto_file_likely"] as? Bool ?? false
         graceMinutes = (d["grace_minutes"] as? NSNumber)?.intValue ?? 30
         let n = d["notify"] as? [String: Any] ?? [:]
-        notifyKind = (n["kind"] as? String) == "mac" ? "mac" : "imessage"   // earlier versions had other channels
+        let kind = n["kind"] as? String ?? ""
+        notifyKind = ["mac", "none"].contains(kind) ? kind : "imessage"   // earlier versions had other channels
         imessageTo = n["imessage_to"] as? String ?? ""
         pollSeconds = (d["poll_seconds"] as? NSNumber)?.doubleValue ?? 60
         repeatWindowHours = (d["repeat_window_hours"] as? NSNumber)?.doubleValue ?? 24

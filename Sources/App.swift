@@ -106,6 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(withTitle: "Open Callwatch", action: #selector(showWindow), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Quit Callwatch", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         statusItem.menu = menu
+        statusItem.button?.title = engine.stats.waiting > 0 ? " \(engine.stats.waiting)" : ""
     }
 
     private func buildMenu() {
