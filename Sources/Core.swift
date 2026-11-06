@@ -101,7 +101,10 @@ struct Call: Identifiable, Equatable {
     var reports: Int?
     var status = ""
     var ref: String?
+    var kind = "call"            // call or text
+    var body = ""                // what a text message said
     var id: String { uid }
+    var isText: Bool { kind == "text" }
     var date: Date { Date(timeIntervalSince1970: ts) }
 }
 
@@ -160,7 +163,66 @@ enum CallLog {
     }
 }
 
-// MARK: Callwatch's own history
+// MARK: Text messages in the Mac's Messages history
+
+/// The text of a message row. Newer macOS versions keep it only inside the `attributedBody` archive.
+func messageText(_ text: Any?, _ body: Any?) -> String? {
+    if let t = text as? String { return t }
+    guard let data = body as? Data, let marker = data.range(of: Data("NSString".utf8)) else { return nil }
+    var i = marker.upperBound
+    while i < data.endIndex, data[i] != 0x2B { i += 1 }      // '+' introduces the string
+    guard i + 1 < data.endIndex else { return nil }
+    var length = Int(data[i + 1]); i += 2
+    if length == 0x81, i + 1 < data.endIndex { length = Int(data[i]) | Int(data[i + 1]) << 8; i += 2 }
+    guard i + length <= data.endIndex else { return nil }
+    return String(data: data[i..<(i + length)], encoding: .utf8)
+}
+
+enum TextLog {
+    static var path = NSHomeDirectory() + "/Library/Messages/chat.db"
+
+    private static func open() throws -> DB {
+        do {
+            let db = try DB(path: path, readOnly: true)
+            try db.rows("select 1 from sqlite_master limit 1")
+            return db
+        } catch let e as DBError where e.denied { throw NoAccess() }
+    }
+
+    static func newestRow() throws -> Int {
+        (try open().rows("select coalesce(max(ROWID), 0) from message").first?[0] as? Int) ?? 0
+    }
+
+    /// Text messages received one-to-one after message row `after`, oldest first, and the newest row seen.
+    static func incoming(after: Int) throws -> (texts: [Call], newest: Int) {
+        let rows = try open().rows(
+            "select m.ROWID, m.guid, h.id, m.text, m.attributedBody, m.date / 1000000000.0 + 978307200, coalesce(m.is_spam, 0) " +
+            "from message m join handle h on h.ROWID = m.handle_id " +
+            "join chat_message_join j on j.message_id = m.ROWID join chat c on c.ROWID = j.chat_id " +
+            "where m.ROWID > ? and m.is_from_me = 0 and m.item_type = 0 and coalesce(m.associated_message_type, 0) = 0 and c.style = 45 " +
+            "order by m.ROWID", [after])
+        let texts = rows.map { r in
+            Call(uid: "text-" + (r[1] as? String ?? UUID().uuidString), number: digits10(r[2] as? String), ts: asDouble(r[5]),
+                 callerName: (r[6] as? Int ?? 0) != 0 ? "Marked as junk" : "", kind: "text",
+                 body: (messageText(r[3], r[4]) ?? "").trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        return (texts, (rows.last?[0] as? Int) ?? after)
+    }
+
+    /// Every number the owner has written to: someone you text yourself is not a spammer.
+    static func writtenTo() throws -> Set<String> {
+        let rows = try open().rows("select distinct h.id from message m join handle h on h.ROWID = m.handle_id where m.is_from_me = 1")
+        return Set(rows.compactMap { digits10($0[0] as? String) })
+    }
+
+    /// Sign-in and delivery codes come from numbers nobody has saved; they are not spam.
+    static func looksLikeCode(_ body: String) -> Bool {
+        body.range(of: #"\b\d{4,8}\b"#, options: .regularExpression) != nil &&
+            body.range(of: "code|verif|passcode|one-time|otp|2fa|sign in|login|security", options: [.regularExpression, .caseInsensitive]) != nil
+    }
+}
+
+// MARK: Spamurai's own history
 
 final class Store {
     let db: DB
@@ -173,6 +235,9 @@ final class Store {
         try db.rows("create table if not exists calls (uid text primary key, number text, ts real, answered int, duration real, " +
                     "reports int, status text, noted real, caller_name text default '', ref text)")
         try db.rows("create table if not exists ignored (number text primary key, added real)")
+        let have = Set(try db.rows("pragma table_info(calls)").compactMap { $0[1] as? String })
+        if !have.contains("kind") { try db.rows("alter table calls add column kind text default 'call'") }
+        if !have.contains("body") { try db.rows("alter table calls add column body text default ''") }
     }
 
     func get(_ key: String) -> String? { (try? db.rows("select v from meta where k=?", [key]))?.first?[0] as? String }
@@ -186,19 +251,19 @@ final class Store {
     }
 
     func record(_ call: Call, _ status: String, ref: String? = nil) {
-        _ = try? db.rows("insert or replace into calls (uid, number, ts, answered, duration, reports, status, noted, caller_name, ref) " +
-                         "values (?,?,?,?,?,?,?,?,?,?)",
+        _ = try? db.rows("insert or replace into calls (uid, number, ts, answered, duration, reports, status, noted, caller_name, ref, kind, body) " +
+                         "values (?,?,?,?,?,?,?,?,?,?,?,?)",
                          [call.uid, call.number, call.ts, call.answered, call.duration, call.reports, status,
-                          Date().timeIntervalSince1970, call.callerName, ref])
+                          Date().timeIntervalSince1970, call.callerName, ref, call.kind, call.body])
     }
 
     func calls(where clause: String, _ binds: [Any?] = [], order: String = "ts") -> [Call] {
-        let rows = (try? db.rows("select uid, number, ts, answered, duration, caller_name, reports, status, ref from calls " +
+        let rows = (try? db.rows("select uid, number, ts, answered, duration, caller_name, reports, status, ref, kind, body from calls " +
                                  "where \(clause) order by \(order)", binds)) ?? []
         return rows.map { r in
             Call(uid: r[0] as? String ?? "", number: r[1] as? String, ts: asDouble(r[2]), duration: asDouble(r[4]),
                  answered: (r[3] as? Int ?? 0) != 0, callerName: r[5] as? String ?? "", reports: r[6] as? Int,
-                 status: r[7] as? String ?? "", ref: r[8] as? String)
+                 status: r[7] as? String ?? "", ref: r[8] as? String, kind: r[9] as? String ?? "call", body: r[10] as? String ?? "")
         }
     }
 
@@ -226,7 +291,7 @@ enum FCCData {
         var c = URLComponents(string: "https://opendata.fcc.gov/resource/3xyp-aqkj.json")!
         c.queryItems = [URLQueryItem(name: "$select", value: "count(*)"), URLQueryItem(name: "caller_id_number", value: dashed(number))]
         var req = URLRequest(url: c.url!, timeoutInterval: 15)
-        req.setValue("Callwatch (personal)", forHTTPHeaderField: "User-Agent")
+        req.setValue("Spamurai (personal)", forHTTPHeaderField: "User-Agent")
         guard let (data, _) = try? await URLSession.shared.data(for: req),
               let rows = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
               let s = rows.first?["count"] as? String else { return nil }

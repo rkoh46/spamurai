@@ -5,14 +5,14 @@ import UserNotifications
 /// Tells the owner about a call and takes the answer back.
 /// imessage: an iMessage to the owner's own number; the owner replies 1 or 2 in that thread.
 /// mac: a notification on this Mac with File and Ignore buttons.
-/// none: nothing is sent; the owner opens Callwatch and answers there.
+/// none: nothing is sent; the owner opens Spamurai and answers there.
 final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     let settings: Settings
     let store: Store
     var onAnswer: ((_ choice: String, _ uid: String?) -> Void)?
     private var pollTimer: Timer?
     private var lastChoice: (String, Date)?
-    static var messagesDB = NSHomeDirectory() + "/Library/Messages/chat.db"
+    static var messagesDB: String { TextLog.path }
 
     init(settings: Settings, store: Store) {
         self.settings = settings
@@ -39,7 +39,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         }
         let parts = text.split(separator: "\n", maxSplits: 1).map(String.init)
         let content = UNMutableNotificationContent()
-        content.title = parts.first ?? "Callwatch"
+        content.title = parts.first ?? "Spamurai"
         content.body = parts.count > 1 ? parts[1] : ""
         content.sound = .default
         if let uid { content.categoryIdentifier = "CALL"; content.userInfo = ["uid": uid] }
@@ -51,7 +51,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         if ["1", "2"].contains(response.actionIdentifier) {
             await MainActor.run { onAnswer?(response.actionIdentifier, uid) }
         } else {
-            await MainActor.run { NotificationCenter.default.post(name: .init("CallwatchOpenWindow"), object: nil) }
+            await MainActor.run { NotificationCenter.default.post(name: .init("SpamuraiOpenWindow"), object: nil) }
         }
     }
 
@@ -102,23 +102,10 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         if let error {
             let code = error[NSAppleScript.errorNumber] as? Int ?? 0
             if code == -1743 {
-                throw FilingError(message: "macOS has not allowed Callwatch to send with Messages. Allow it in System Settings, Privacy & Security, Automation")
+                throw FilingError(message: "macOS has not allowed Spamurai to send with Messages. Allow it in System Settings, Privacy & Security, Automation")
             }
             throw FilingError(message: "Messages could not send: \(error[NSAppleScript.errorMessage] as? String ?? "error \(code)")")
         }
-    }
-
-    /// The text of a message row. Newer macOS versions keep it only inside the `attributedBody` archive.
-    static func text(_ text: Any?, _ body: Any?) -> String? {
-        if let t = text as? String { return t }
-        guard let data = body as? Data, let marker = data.range(of: Data("NSString".utf8)) else { return nil }
-        var i = marker.upperBound
-        while i < data.endIndex, data[i] != 0x2B { i += 1 }      // '+' introduces the string
-        guard i + 1 < data.endIndex else { return nil }
-        var length = Int(data[i + 1]); i += 2
-        if length == 0x81, i + 1 < data.endIndex { length = Int(data[i]) | Int(data[i + 1]) << 8; i += 2 }
-        guard i + length <= data.endIndex else { return nil }
-        return String(data: data[i..<(i + length)], encoding: .utf8)
     }
 
     /// New messages in the owner's thread with themselves that are exactly "1" or "2".
@@ -136,7 +123,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         guard let newest = rows.last?[0] as? Int else { return }
         store.set("imessage_rowid", String(newest))
         for r in rows {
-            let t = (Notifier.text(r[1], r[2]) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let t = (messageText(r[1], r[2]) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             guard t == "1" || t == "2" else { continue }
             // A message to yourself is stored twice (sent and received); count it once.
             if let (c, at) = lastChoice, c == t, Date().timeIntervalSince(at) < 20 { continue }

@@ -1,7 +1,7 @@
 import Foundation
 import SwiftUI
 
-/// The owner's settings, kept in ~/Library/Application Support/Callwatch/config.json.
+/// The owner's settings, kept in ~/Library/Application Support/Spamurai/config.json.
 final class Settings: ObservableObject {
     static let meKeys = ["first_name", "last_name", "email", "phone", "address1", "address2", "city", "state", "zip",
                          "gave_permission", "on_do_not_call_list", "phone_type"]
@@ -15,6 +15,7 @@ final class Settings: ObservableObject {
     @Published var answers: [String: String] = [:]
     @Published var agreed = false          // the owner accepted that complaints carry the perjury statement
     @Published var autoFile = false        // file likely robocalls without asking
+    @Published var watchTexts = true       // also watch text messages from unknown numbers
     @Published var graceMinutes = 30       // wait this long before filing a likely robocall, so the owner can stop it (0 = file at once)
     @Published var notifyKind = "imessage" // imessage (to the owner's own address), mac (a notification), or none (the owner checks the app)
     @Published var imessageTo = ""         // the owner's iMessage address when it is not the cell number (an Apple Account email, say)
@@ -37,6 +38,7 @@ final class Settings: ObservableObject {
         agreed = d["agreed"] as? Bool ?? false
         autoFile = d["auto_file_likely"] as? Bool ?? false
         graceMinutes = (d["grace_minutes"] as? NSNumber)?.intValue ?? 30
+        watchTexts = d["watch_texts"] as? Bool ?? true
         let n = d["notify"] as? [String: Any] ?? [:]
         let kind = n["kind"] as? String ?? ""
         notifyKind = ["mac", "none"].contains(kind) ? kind : "imessage"   // earlier versions had other channels
@@ -56,6 +58,7 @@ final class Settings: ObservableObject {
         d["agreed"] = agreed
         d["auto_file_likely"] = autoFile
         d["grace_minutes"] = graceMinutes
+        d["watch_texts"] = watchTexts
         var n = d["notify"] as? [String: Any] ?? [:]
         n["kind"] = notifyKind
         n["imessage_to"] = imessageTo.trimmingCharacters(in: .whitespaces)

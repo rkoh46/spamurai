@@ -16,6 +16,11 @@ final class Filer: NSObject, WKNavigationDelegate {
     static func description(_ call: Call) -> String {
         let f = DateFormatter()
         f.dateFormat = "MMMM d, yyyy 'at' h:mm a"
+        if call.isText {
+            // The form takes no attachments, so the message itself is quoted.
+            let said = call.body.count > 1200 ? String(call.body.prefix(1200)) + "…" : call.body
+            return "Unwanted text message to my cell phone from \(dashed(call.number)) on \(f.string(from: call.date)). The message said: “\(said)”"
+        }
         var text = "Unwanted call to my cell phone from \(dashed(call.number)) on \(f.string(from: call.date))."
         text += call.answered ? " I answered; the call lasted \(Int(call.duration.rounded())) seconds." : " I did not answer."
         return text
@@ -23,12 +28,14 @@ final class Filer: NSObject, WKNavigationDelegate {
 
     /// The form address with everything that is not personal filled in through the form's own tf_ parameters.
     /// With `personal`, the owner's details are included too (used for the link a person opens by hand).
+    static func subject(_ call: Call) -> String { "\(call.isText ? "Spam text" : "Robocall") \(dashed(call.number))" }
+
     static func url(_ call: Call, _ s: Settings, sworn: Bool) -> URL {
         let day = DateFormatter(); day.dateFormat = "yyyy-MM-dd"
         let time = DateFormatter(); time.dateFormat = "h:mm a"
         var q: [(String, String)] = [
             ("ticket_form_id", "39744"),
-            ("tf_subject", "Robocall \(dashed(call.number))"),
+            ("tf_subject", subject(call)),
             ("tf_description", description(call)),
             ("tf_22619354", "telemarketing_phone"),
             ("tf_360000167206", "phone_unwanted_calls_all_other_unwanted_calls"),
@@ -48,7 +55,8 @@ final class Filer: NSObject, WKNavigationDelegate {
         }
         if sworn {   // the owner's standing answers about the call
             let a = s.answers
-            q.append(("tf_22787840", a["call_type"] == "live" ? "live_voice_type_of_call_telemarketing" : "prerecorded_voice_type_of_call_telemarketing"))
+            q.append(("tf_22787840", call.isText ? "text_messaage_type_of_call_telemarketing"   // the form's own spelling
+                      : a["call_type"] == "live" ? "live_voice_type_of_call_telemarketing" : "prerecorded_voice_type_of_call_telemarketing"))
             q.append(("tf_22625554", "\(a["advertised"] ?? "no")_telemarketing_services"))
             q.append(("tf_22630454", "\(a["name_given"] ?? "uncertain")_advertiser_business_name_provided"))
             q.append(("tf_52026458923796", "\(a["imposter"] ?? "uncertain")_imposter"))
@@ -106,10 +114,10 @@ final class Filer: NSObject, WKNavigationDelegate {
         }
     }
 
-    /// Saves what the form looked like to ~/Library/Logs/Callwatch/last-failure.png.
+    /// Saves what the form looked like to ~/Library/Logs/Spamurai/last-failure.png.
     private func snapshot() async {
         guard let web else { return }
-        let dir = NSHomeDirectory() + "/Library/Logs/Callwatch"
+        let dir = NSHomeDirectory() + "/Library/Logs/Spamurai"
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         let image: NSImage? = await withCheckedContinuation { cont in
             web.takeSnapshot(with: nil) { img, _ in cont.resume(returning: img) }
@@ -127,7 +135,7 @@ final class Filer: NSObject, WKNavigationDelegate {
         guard let web else { throw FilingError(message: "no web view") }
         web.load(URLRequest(url: Filer.url(call, s, sworn: true)))
 
-        let subject = "Robocall \(dashed(call.number))"
+        let subject = Filer.subject(call)
         let loaded = try await wait(45, until: "(document.querySelector('[name=\"request[subject]\"]')||{}).value === \(quote(subject)) && !!document.querySelector('[name=\"request[custom_fields][22625624]\"]')")
         if !loaded {
             let title = (try? await js("document.title") as? String) ?? ""

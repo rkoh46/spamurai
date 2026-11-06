@@ -63,6 +63,7 @@ private let numberFont = Font.system(.body, design: .rounded).weight(.semibold)
 enum Page: String, CaseIterable, Identifiable {
     case calls = "Calls", ignored = "Ignored", setup = "Setup"
     var id: String { rawValue }
+    var title: String { self == .calls ? "Calls & Texts" : rawValue }
     var symbol: String { self == .calls ? "phone.arrow.down.left.fill" : self == .ignored ? "hand.raised.fill" : "gearshape.fill" }
     var color: Color { self == .calls ? .green : self == .ignored ? .red : .gray }
 }
@@ -75,7 +76,7 @@ struct RootView: View {
     var body: some View {
         NavigationSplitView {
             List(Page.allCases, selection: Binding(get: { page }, set: { page = $0 ?? .calls })) { p in
-                Label { Text(p.rawValue) } icon: { IconTile(symbol: p.symbol, color: p.color, size: 22) }
+                Label { Text(p.title) } icon: { IconTile(symbol: p.symbol, color: p.color, size: 22) }
                     .badge(p == .calls ? engine.stats.waiting : p == .ignored ? engine.ignored.count : 0)
                     .padding(.vertical, 2)
                     .tag(p)
@@ -124,8 +125,8 @@ struct CallsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 if engine.access == "denied" {
-                    notice("lock.fill", .red, "Callwatch can't read your calls",
-                           "In Full Disk Access, switch Callwatch on, then quit and reopen it.", "Open Full Disk Access") { openFullDiskAccess() }
+                    notice("lock.fill", .red, "Spamurai can't read your calls",
+                           "In Full Disk Access, switch Spamurai on, then quit and reopen it.", "Open Full Disk Access") { openFullDiskAccess() }
                 }
                 if !settings.ready {
                     notice("exclamationmark.triangle.fill", .orange, "Nothing can be filed yet", "Missing: \(settings.gaps.joined(separator: ", ")).", "Finish Setup", openSetup)
@@ -142,13 +143,13 @@ struct CallsView: View {
                         waitingRow(c)
                     } }
                 }
-                header("Recent unknown callers")
+                header("Recent calls and texts")
                 if engine.recent.isEmpty {
                     Card { HStack(spacing: 14) {
                         IconTile(symbol: "phone.arrow.down.left.fill", color: .green, size: 40)
                         VStack(alignment: .leading, spacing: 3) {
-                            Text("No unknown callers yet").font(.headline)
-                            Text("Calls from numbers that aren't in your contacts show up here about a minute after they reach your iPhone.")
+                            Text("Nothing from unknown numbers yet").font(.headline)
+                            Text("Calls and texts from numbers that aren't in your contacts show up here about a minute after they reach your iPhone.")
                                 .foregroundStyle(.secondary)
                         }
                     }.padding(20).frame(maxWidth: .infinity, alignment: .leading) }
@@ -178,12 +179,12 @@ struct CallsView: View {
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .tint(brand)
-        .navigationTitle("Calls")
+        .navigationTitle("Calls & Texts")
         .alert("Ignore \(dashed(askIgnore?.number))?", isPresented: Binding(get: { askIgnore != nil }, set: { if !$0 { askIgnore = nil } }), presenting: askIgnore) { call in
             Button("Ignore Number", role: .destructive) { Task { await engine.answer("2", uid: call.uid) } }
             Button("Cancel", role: .cancel) {}
         } message: { _ in
-            Text("Callwatch will stop asking about this number and will never report it. You can undo this on the Ignored page.")
+            Text("Spamurai will stop asking about this number and will never report it. You can undo this on the Ignored page.")
         }
     }
 
@@ -205,7 +206,7 @@ struct CallsView: View {
 
     private var stats: some View {
         HStack(spacing: 12) {
-            stat("phone.arrow.down.left.fill", .blue, engine.stats.unknown, "Unknown callers", "last 30 days")
+            stat("phone.arrow.down.left.fill", .blue, engine.stats.unknown, "Unknown numbers", "calls and texts, 30 days")
             stat("checkmark.seal.fill", .green, engine.stats.filed, "Complaints filed", "last 30 days")
             stat("hand.raised.fill", .red, engine.stats.ignored, "Ignored", "last 30 days")
             stat("clock.fill", .orange, engine.stats.waiting, "Need your answer", "right now")
@@ -226,15 +227,15 @@ struct CallsView: View {
     private var chart: some View {
         Card { VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Callers per day").font(.headline)
+                Text("Calls and texts per day").font(.headline)
                 Spacer()
                 Label("Filed", systemImage: "square.fill").foregroundStyle(.green).font(.caption)
                 Label("Not filed", systemImage: "square.fill").foregroundStyle(.blue.opacity(0.75)).font(.caption)
             }.labelStyle(.titleAndIcon)
             Chart {
                 ForEach(Array(engine.days.enumerated()), id: \.offset) { _, d in
-                    BarMark(x: .value("Day", d.date, unit: .day), y: .value("Callers", d.filed)).foregroundStyle(Color.green.gradient)
-                    BarMark(x: .value("Day", d.date, unit: .day), y: .value("Callers", d.calls - d.filed)).foregroundStyle(Color.blue.opacity(0.6))
+                    BarMark(x: .value("Day", d.date, unit: .day), y: .value("Count", d.filed)).foregroundStyle(Color.green.gradient)
+                    BarMark(x: .value("Day", d.date, unit: .day), y: .value("Count", d.calls - d.filed)).foregroundStyle(Color.blue.opacity(0.6))
                 }
             }
             .chartXAxis { AxisMarks(values: .stride(by: .day, count: 7)) { _ in AxisGridLine(); AxisValueLabel(format: .dateTime.month(.abbreviated).day()) } }
@@ -243,7 +244,22 @@ struct CallsView: View {
         }.padding(14) }
     }
 
-    private func heard(_ c: Call) -> String { c.answered ? "answered, \(Int(c.duration.rounded())) s" : "not answered" }
+    private func heard(_ c: Call) -> String { c.isText ? "text message" : c.answered ? "answered, \(Int(c.duration.rounded())) s" : "not answered" }
+
+    /// The number with a small phone or message symbol, and what a text said underneath.
+    private func title(_ c: Call, flagged: Bool) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: c.isText ? "message.fill" : "phone.fill").font(.caption).foregroundStyle(c.isText ? Color.green : .secondary)
+            Text(dashed(c.number)).font(numberFont).monospacedDigit().textSelection(.enabled)
+            if !c.callerName.isEmpty { Tag(text: c.callerName.capitalized, color: flagged ? .red : .secondary) }
+        }
+    }
+
+    @ViewBuilder private func said(_ c: Call) -> some View {
+        if c.isText, !c.body.isEmpty {
+            Text("“\(c.body.replacingOccurrences(of: "\n", with: " "))”").font(.callout).lineLimit(2).textSelection(.enabled)
+        }
+    }
 
     private func onFile(_ c: Call) -> some View {
         Group {
@@ -267,11 +283,9 @@ struct CallsView: View {
         return HStack(spacing: 12) {
             Image(systemName: symbol).font(.title2).foregroundStyle(color).frame(width: 24)
             VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 8) {
-                    Text(dashed(c.number)).font(numberFont).monospacedDigit().textSelection(.enabled)
-                    if !c.callerName.isEmpty { Tag(text: c.callerName.capitalized, color: engine.likely(c) ? .red : .secondary) }
-                }
+                title(c, flagged: engine.likely(c))
                 Text("\(whenText(c.date)) · \(heard(c).prefix(1).uppercased() + heard(c).dropFirst())").font(.callout).foregroundStyle(.secondary)
+                said(c)
             }
             Spacer(minLength: 8)
             onFile(c)
@@ -290,11 +304,9 @@ struct CallsView: View {
         return HStack(spacing: 12) {
             IconTile(symbol: likely ? "exclamationmark.triangle.fill" : "questionmark", color: likely ? .orange : .blue, size: 32)
             VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 8) {
-                    Text(dashed(c.number)).font(numberFont).monospacedDigit().textSelection(.enabled)
-                    if !c.callerName.isEmpty { Tag(text: c.callerName.capitalized, color: likely ? .red : .secondary) }
-                }
+                title(c, flagged: likely)
                 Text("\(whenText(c.date)) · \(note)").font(.callout).foregroundStyle(.secondary)
+                said(c)
             }
             Spacer(minLength: 8)
             onFile(c)
@@ -322,7 +334,7 @@ struct IgnoredView: View {
                         IconTile(symbol: "hand.raised.fill", color: .red, size: 40)
                         VStack(alignment: .leading, spacing: 3) {
                             Text("No ignored numbers").font(.headline)
-                            Text("When you ignore a caller, Callwatch never asks about that number again. People in your contacts are always left alone.")
+                            Text("When you ignore a caller, Spamurai never asks about that number again. People in your contacts are always left alone.")
                                 .foregroundStyle(.secondary)
                         }
                     }.padding(20).frame(maxWidth: .infinity, alignment: .leading) }
@@ -386,13 +398,13 @@ struct SetupView: View {
             Section {
                 step(detailsDone, "Your details", "Fill in your name, address, email and cell number below.")
                 step(answersDone, "Your answers about the calls", "Choose the four answers and switch on the agreement.")
-                step(askingDone, "How Callwatch asks you", "Send yourself one iMessage from this Mac, or choose another way under Asking you.")
-                step(engine.access == "ok", "Access to your calls", "Switch Callwatch on in Full Disk Access, then quit and reopen it.")
+                step(askingDone, "How Spamurai asks you", "Send yourself one iMessage from this Mac, or choose another way under Asking you.")
+                step(engine.access == "ok", "Access to your calls", "Switch Spamurai on in Full Disk Access, then quit and reopen it.")
             } header: {
                 HStack(spacing: 12) {
                     Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 44, height: 44)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(settings.ready && engine.access == "ok" && askingDone ? "Callwatch is ready" : "Set up Callwatch").font(.title2.weight(.semibold))
+                        Text(settings.ready && engine.access == "ok" && askingDone ? "Spamurai is ready" : "Set up Spamurai").font(.title2.weight(.semibold))
                         Text("Four things, then it watches your calls by itself.").foregroundStyle(.secondary)
                     }
                 }.padding(.bottom, 6).textCase(nil)
@@ -424,14 +436,15 @@ struct SetupView: View {
                     Text("Every complaint carries the FCC's statement: “I declare under penalty of perjury that (1) I am over 18 years old, (2) I am authorized to make decisions regarding the telephone number listed below, and (3) the information I have provided today on this Federal Communications Commission electronic form is, to the best of my knowledge, true and correct.”")
                         .font(.callout).foregroundStyle(.secondary)
                 } icon: { Image(systemName: "signature").foregroundStyle(.orange) }
-                Toggle("Callwatch may file complaints in my name with this statement and these answers",
+                Toggle("Spamurai may file complaints in my name with this statement and these answers",
                        isOn: Binding(get: { settings.agreed }, set: { settings.agreed = $0; settings.save() }))
             } header: { head("Your answers about the calls", "text.bubble.fill", .purple) } footer: {
-                Text("The complaint form asks these about each call. Callwatch files every complaint with the answers you choose here, so pick what is true for the calls you report.")
+                Text("The complaint form asks these about each call. Spamurai files every complaint with the answers you choose here, so pick what is true for the calls you report.")
             }
 
             Section {
-                Toggle("File likely robocalls without asking", isOn: Binding(get: { settings.autoFile }, set: { settings.autoFile = $0; settings.save() }))
+                Toggle("Watch text messages too", isOn: Binding(get: { settings.watchTexts }, set: { settings.watchTexts = $0; settings.save() }))
+                Toggle("File likely robocalls and spam texts without asking", isOn: Binding(get: { settings.autoFile }, set: { settings.autoFile = $0; settings.save() }))
                 if settings.autoFile {
                     Picker("Wait before filing", selection: Binding(get: { settings.graceMinutes }, set: { settings.graceMinutes = $0; settings.save() })) {
                         Text("Don't wait").tag(0)
@@ -442,14 +455,14 @@ struct SetupView: View {
                     }
                 }
             } header: { head("Filing", "checkmark.seal.fill", .green) } footer: {
-                Text("Likely means \(settings.likelyReports) or more FCC complaints on file for the number, or a spam label from your carrier. While Callwatch waits, you are told and can stop the filing by ignoring the number. A call you talked on is always asked about.")
+                Text("Likely means \(settings.likelyReports) or more FCC complaints on file for the number, or a spam label from your carrier. While Spamurai waits, you are told and can stop the filing by ignoring the number. A call you talked on is always asked about. Texts are filed with the same answers, as a text message, with what the message said. Sign-in codes and anyone you have written to are left alone.")
             }
 
             Section {
                 Picker("Ask me with", selection: Binding(get: { settings.notifyKind }, set: { settings.notifyKind = $0; settings.save() })) {
                     Text("An iMessage to myself").tag("imessage")
                     Text("A notification on this Mac").tag("mac")
-                    Text("Nothing, I'll check Callwatch").tag("none")
+                    Text("Nothing, I'll check Spamurai").tag("none")
                 }
                 if settings.notifyKind == "imessage" {
                     TextField("My iMessage address", text: Binding(get: { settings.imessageTo }, set: { settings.imessageTo = $0; settings.save(); hasThread = engine.notifier.selfThread() != nil }),
@@ -458,7 +471,7 @@ struct SetupView: View {
                         LabeledContent {
                             Button("Open Messages") { engine.notifier.openSelfThread() }
                         } label: {
-                            Label("Send yourself one message first, any text. Callwatch writes to that conversation.", systemImage: "arrow.turn.down.right").foregroundStyle(.orange)
+                            Label("Send yourself one message first, any text. Spamurai writes to that conversation.", systemImage: "arrow.turn.down.right").foregroundStyle(.orange)
                         }
                     }
                 }
@@ -474,24 +487,24 @@ struct SetupView: View {
                 Text(settings.notifyKind == "imessage"
                      ? "The question reaches your iPhone as a message from yourself. Reply 1 to file or 2 to ignore. Leave the address empty to use your cell number. The test asks about a made-up call and files nothing."
                      : settings.notifyKind == "mac" ? "The notification has File and Ignore buttons. The test asks about a made-up call and files nothing."
-                     : "Callwatch stays quiet. Callers it is unsure about wait on the Calls page, where you file or ignore them. The menu bar icon shows how many are waiting.")
+                     : "Spamurai stays quiet. Callers it is unsure about wait on the Calls page, where you file or ignore them. The menu bar icon shows how many are waiting.")
             }
 
             Section {
                 LabeledContent {
                     if engine.access != "ok" { Button("Open Full Disk Access") { openFullDiskAccess() } }
                 } label: {
-                    Label(engine.access == "ok" ? "Callwatch can read your calls" : "No access to your calls yet",
+                    Label(engine.access == "ok" ? "Spamurai can read your calls" : "No access to your calls yet",
                           systemImage: engine.access == "ok" ? "checkmark.circle.fill" : "lock.circle.fill")
                         .foregroundStyle(engine.access == "ok" ? Color.green : .red)
                 }
-                Toggle("Open Callwatch when I log in", isOn: Binding(get: { atLogin }, set: { on in
+                Toggle("Open Spamurai when I log in", isOn: Binding(get: { atLogin }, set: { on in
                     do { if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() } } catch {}
                     atLogin = SMAppService.mainApp.status == .enabled
                 }))
             } header: { head("This Mac", "macbook", .gray) } footer: {
-                Text(engine.access == "ok" ? "Calls sync from your iPhone when it uses the same Apple Account as this Mac. Callwatch keeps watching from the menu bar after you close this window."
-                     : "macOS only lets apps with Full Disk Access read the calls your iPhone syncs to this Mac, and your replies in Messages. Switch Callwatch on in the list (press + and choose it if it is not there), then quit and reopen Callwatch.")
+                Text(engine.access == "ok" ? "Calls sync from your iPhone when it uses the same Apple Account as this Mac. Spamurai keeps watching from the menu bar after you close this window."
+                     : "macOS only lets apps with Full Disk Access read the calls your iPhone syncs to this Mac, and your replies in Messages. Switch Spamurai on in the list (press + and choose it if it is not there), then quit and reopen Spamurai.")
             }
         }
         .formStyle(.grouped)

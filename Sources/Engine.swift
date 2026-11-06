@@ -22,7 +22,7 @@ final class Engine: ObservableObject {
     @Published var lastProblem = ""
     @Published var testOutcome = ""            // what the last test question showed
 
-    static let spamName = try! NSRegularExpression(pattern: "spam|scam|fraud|telemarket|robo|nuisance", options: .caseInsensitive)
+    static let spamName = try! NSRegularExpression(pattern: "spam|scam|fraud|telemarket|robo|nuisance|junk", options: .caseInsensitive)
 
     init(home: String, demo: Bool) {
         self.demo = demo
@@ -54,11 +54,101 @@ final class Engine: ObservableObject {
 
     func summary(_ call: Call) -> [String] {
         let f = DateFormatter(); f.dateFormat = "EEE h:mm a"
+        if call.isText {
+            let preview = call.body.count > 160 ? String(call.body.prefix(160)) + "…" : call.body
+            var lines = ["\(likely(call) ? "Likely spam text from" : "Text from unknown number") \(dashed(call.number))",
+                         f.string(from: call.date), "“\(preview)”"]
+            if let r = call.reports { lines.append("FCC complaints on file: \(r)") }
+            return lines
+        }
         var lines = ["\(likely(call) ? "Likely robocall" : "Unknown caller") \(dashed(call.number))",
                      "\(f.string(from: call.date)), \(call.answered ? "answered, \(Int(call.duration.rounded())) s" : "not answered")"]
         if !call.callerName.isEmpty { lines.append("Caller ID: \(call.callerName)") }
         if let r = call.reports { lines.append("FCC complaints on file: \(r)") }
         return lines
+    }
+
+    /// What happens to one call or text from an unknown number: skipped as a repeat, filed, scheduled, or asked about.
+    private func decide(_ incoming: Call) async {
+        var call = incoming
+        guard let number = call.number else { return }
+        if store.toldRecently(number, before: call.ts, window: settings.repeatWindowHours * 3600) { store.record(call, "repeat"); return }
+        if call.reports == nil { call.reports = await FCCData.reportCount(number) }
+        // A call the owner stayed on is never filed without asking: that may have been a real conversation.
+        let talked = call.answered && call.duration >= 30
+        if settings.autoFile, likely(call), !talked, settings.ready {
+            if settings.graceMinutes > 0 {
+                // Announce it and wait: the owner can stop it (2) or file at once (1). `ref` holds the filing time.
+                let due = Date().addingTimeInterval(Double(settings.graceMinutes) * 60)
+                let f = DateFormatter(); f.dateFormat = "h:mm a"
+                let how = notifier.repliesByText
+                    ? ["Reply 2 to stop and ignore this number", "Reply 1 to file now"] : ["Ignore the number to stop this."]
+                store.record(call, "scheduled", ref: String(due.timeIntervalSince1970))
+                do {
+                    try await notifier.send((summary(call) + ["", "Filing an FCC complaint at \(f.string(from: due).lowercased())"] + how)
+                        .joined(separator: "\n"), uid: call.uid)
+                } catch { lastProblem = "Could not send a notification: \((error as? FilingError)?.message ?? error.localizedDescription)" }
+            } else {
+                store.record(call, "asked")
+                refresh()
+                await file(call)
+            }
+        } else {
+            do {
+                let how = notifier.repliesByText
+                    ? ["Reply 1 to file an FCC complaint", "Reply 2 to ignore this number from now on"]
+                    : ["File a complaint or ignore this number?"]
+                try await notifier.send((summary(call) + [""] + how).joined(separator: "\n"), uid: call.uid)
+                store.record(call, "asked")
+            } catch {
+                store.record(call, "unsent")
+                lastProblem = "Could not send a notification: \((error as? FilingError)?.message ?? error.localizedDescription)"
+            }
+        }
+    }
+
+    /// For checking the text rules against recent history: how the last `days` days of texts would be sorted. Sends and files nothing.
+    func previewTexts(days: Double) throws -> String {
+        let since = Date().timeIntervalSince1970 - days * 86400
+        let (texts, _) = try TextLog.incoming(after: 0)
+        let recent = texts.filter { $0.ts > since }
+        let own = Set([digits10(settings.me["phone"]), digits10(notifier.handle)].compactMap { $0 })
+        let known = try CallLog.contactNumbers().union(CallLog.dialedNumbers()).union(TextLog.writtenTo()).union(store.ignored()).union(own)
+        var counts = ["not a 10 digit number": 0, "known sender": 0, "sign-in code": 0, "empty": 0]
+        var unknown: [String: (Int, Bool)] = [:]
+        for t in recent {
+            guard let n = t.number else { counts["not a 10 digit number"]! += 1; continue }
+            if known.contains(n) { counts["known sender"]! += 1; continue }
+            if t.body.isEmpty { counts["empty"]! += 1; continue }
+            if TextLog.looksLikeCode(t.body) { counts["sign-in code"]! += 1; continue }
+            unknown[n] = ((unknown[n]?.0 ?? 0) + 1, (unknown[n]?.1 ?? false) || likely(t))
+        }
+        var out = ["\(recent.count) texts in \(Int(days)) days"] + counts.sorted { $0.key < $1.key }.map { "  skipped, \($0.key): \($0.value)" }
+        out.append("  from unknown numbers: \(unknown.values.map(\.0).reduce(0, +)) texts, \(unknown.count) senders, \(unknown.values.filter(\.1).count) marked as junk by the phone")
+        return out.joined(separator: "\n")
+    }
+
+    /// New text messages from numbers the owner does not know.
+    private func checkTexts() async throws {
+        guard let last = Int(store.get("text_rowid") ?? "") else {
+            store.set("text_rowid", String(try TextLog.newestRow()))   // start from now, not from old messages
+            return
+        }
+        let (texts, newest) = try TextLog.incoming(after: last)
+        store.set("text_rowid", String(newest))
+        let fresh = texts.filter { !store.seen($0.uid) }
+        if fresh.isEmpty { return }
+        let own = Set([digits10(settings.me["phone"]), digits10(notifier.handle)].compactMap { $0 })
+        let known = try CallLog.contactNumbers().union(CallLog.dialedNumbers()).union(TextLog.writtenTo()).union(store.ignored()).union(own)
+        for text in fresh {
+            guard let number = text.number, !known.contains(number), !text.body.isEmpty, !TextLog.looksLikeCode(text.body) else {
+                var skipped = text
+                skipped.body = ""   // keep nothing of messages that are none of Spamurai's business
+                store.record(skipped, text.number == nil ? "no-number" : "known")
+                continue
+            }
+            await decide(text)
+        }
     }
 
     // MARK: The watch loop
@@ -75,45 +165,11 @@ final class Engine: ObservableObject {
             let retry = store.calls(where: "status='unsent'")
             if !todo.isEmpty || !retry.isEmpty {
                 let known = try CallLog.contactNumbers().union(CallLog.dialedNumbers()).union(store.ignored())
-                let window = settings.repeatWindowHours * 3600
-                for var call in retry + todo.filter({ $0.number != nil && !known.contains($0.number!) }) {
-                    if store.toldRecently(call.number!, before: call.ts, window: window) { store.record(call, "repeat"); continue }
-                    if call.reports == nil { call.reports = await FCCData.reportCount(call.number!) }
-                    // A call the owner stayed on is never filed without asking: that may have been a real conversation.
-                    let talked = call.answered && call.duration >= 30
-                    if settings.autoFile, likely(call), !talked, settings.ready {
-                        if settings.graceMinutes > 0 {
-                            // Announce it and wait: the owner can stop it (2) or file at once (1). `ref` holds the filing time.
-                            let due = Date().addingTimeInterval(Double(settings.graceMinutes) * 60)
-                            let f = DateFormatter(); f.dateFormat = "h:mm a"
-                            let how = notifier.repliesByText
-                                ? ["Reply 2 to stop and ignore this number", "Reply 1 to file now"] : ["Ignore the number to stop this."]
-                            store.record(call, "scheduled", ref: String(due.timeIntervalSince1970))
-                            do {
-                                try await notifier.send((summary(call) + ["", "Filing an FCC complaint at \(f.string(from: due).lowercased())"] + how)
-                                    .joined(separator: "\n"), uid: call.uid)
-                            } catch { lastProblem = "Could not send a notification: \((error as? FilingError)?.message ?? error.localizedDescription)" }
-                        } else {
-                            store.record(call, "asked")
-                            refresh()
-                            await file(call)
-                        }
-                    } else {
-                        do {
-                            let how = notifier.repliesByText
-                                ? ["Reply 1 to file an FCC complaint", "Reply 2 to ignore this number from now on"]
-                                : ["File a complaint or ignore this number?"]
-                            try await notifier.send((summary(call) + [""] + how).joined(separator: "\n"), uid: call.uid)
-                            store.record(call, "asked")
-                        } catch {
-                            store.record(call, "unsent")
-                            lastProblem = "Could not send a notification: \((error as? FilingError)?.message ?? error.localizedDescription)"
-                        }
-                    }
-                }
+                for call in retry + todo.filter({ $0.number != nil && !known.contains($0.number!) }) { await decide(call) }
                 for call in todo where !store.seen(call.uid) { store.record(call, call.number == nil ? "no-number" : "known") }
             }
-            // Likely robocalls whose waiting time is over.
+            if settings.watchTexts { try await checkTexts() }
+            // Likely robocalls and spam texts whose waiting time is over.
             for call in store.calls(where: "status='scheduled'") where (Double(call.ref ?? "") ?? 0) <= now {
                 var due = call
                 due.ref = nil
@@ -143,7 +199,7 @@ final class Engine: ObservableObject {
         if choice == "2" {
             store.ignore(call.number ?? "")
             refresh()
-            if uid == nil { try? await notifier.send("Callwatch\nIgnoring \(dashed(call.number)) from now on.") }
+            if uid == nil { try? await notifier.send("Spamurai\nIgnoring \(dashed(call.number)) from now on.") }
         } else {
             await file(call)
         }
@@ -154,11 +210,11 @@ final class Engine: ObservableObject {
     func sendTestQuestion() async -> String {
         let now = Date().timeIntervalSince1970
         for old in store.calls(where: "uid like 'test-%'") { store.forget(old.uid) }
-        var call = Call(uid: "test-\(Int(now))", number: "8445550123", ts: now - 300, callerName: "Callwatch test")
+        var call = Call(uid: "test-\(Int(now))", number: "8445550123", ts: now - 300, callerName: "Spamurai test")
         call.reports = 0
-        let how = notifier.repliesByText ? "Reply 1 or 2 to check that Callwatch hears you." : "Press File or Ignore to check that Callwatch hears you."
+        let how = notifier.repliesByText ? "Reply 1 or 2 to check that Spamurai hears you." : "Press File or Ignore to check that Spamurai hears you."
         do {
-            try await notifier.send("Callwatch test question\nNo real call is involved and nothing will be filed or ignored.\n\n\(how)", uid: call.uid)
+            try await notifier.send("Spamurai test question\nNo real call is involved and nothing will be filed or ignored.\n\n\(how)", uid: call.uid)
         } catch { return (error as? FilingError)?.message ?? error.localizedDescription }
         store.record(call, "asked")
         refresh()
@@ -168,7 +224,7 @@ final class Engine: ObservableObject {
     private func finishTest(_ call: Call, _ choice: String) async {
         store.forget(call.uid)
         refresh()
-        var result = "Callwatch test passed\nYour answer \(choice) arrived."
+        var result = "Spamurai test passed\nYour answer \(choice) arrived."
         if choice == "1" {
             // Fill the real form for the made-up call and stop before Submit.
             do { _ = try await filer.file(call, settings, submit: false); result += " The FCC form was filled in and not sent." }
@@ -176,7 +232,7 @@ final class Engine: ObservableObject {
         } else {
             result += " Nothing was ignored."
         }
-        testOutcome = result.replacingOccurrences(of: "Callwatch test passed\n", with: "Test passed. ")
+        testOutcome = result.replacingOccurrences(of: "Spamurai test passed\n", with: "Test passed. ")
         try? await notifier.send(result)
     }
 
@@ -199,13 +255,13 @@ final class Engine: ObservableObject {
             let left = store.calls(where: "status='asked'").count
             var call = call
             call.ref = nil
-            try? await notifier.send("Filed: Robocall \(number)\n" + (ref == "accepted" ? "The FCC accepted the complaint." : "FCC request \(ref).") +
+            try? await notifier.send("Filed: \(Filer.subject(call))\n" + (ref == "accepted" ? "The FCC accepted the complaint." : "FCC request \(ref).") +
                                      (left > 0 ? " \(left) still waiting." : ""))
         } catch {
             let why = (error as? FilingError)?.message ?? error.localizedDescription
             store.record(call, "link")
             lastProblem = "Could not file for \(number): \(why)"
-            try? await notifier.send("Could not file for \(number)\n\(why). Open Callwatch to try again or file it by hand.")
+            try? await notifier.send("Could not file for \(number)\n\(why). Open Spamurai to try again or file it by hand.")
         }
     }
 
