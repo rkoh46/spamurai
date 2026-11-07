@@ -34,7 +34,7 @@ cat > "$APP/Contents/Info.plist" <<P
 <key>CFBundleExecutable</key><string>Spamurai</string>
 <key>CFBundleIconFile</key><string>Spamurai</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>2.0</string>
+<key>CFBundleShortVersionString</key><string>2.1</string>
 <key>CFBundleVersion</key><string>1</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSHighResolutionCapable</key><true/>

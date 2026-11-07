@@ -2,7 +2,7 @@
 # Builds Spamurai.app and packs it into dist/Spamurai-<version>.dmg for the Releases page.
 set -eu
 cd "$(dirname "$0")"
-VERSION="${1:-2.0}"
+VERSION="${1:-2.1}"
 STAGE="$(mktemp -d)"
 ./build.sh "$STAGE" >/dev/null
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$STAGE/Spamurai.app/Contents/Info.plist"
