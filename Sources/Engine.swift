@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import AppKit
 
 /// Watches the call log, decides, asks or files, and keeps what the window shows.
 @MainActor
@@ -45,6 +46,10 @@ final class Engine: ObservableObject {
                 try? await Task.sleep(nanoseconds: UInt64(settings.pollSeconds * 1_000_000_000))
             }
         }
+        // A Mac that was closed catches up as soon as it wakes, not a poll later.
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in await self?.tick() }
+        }
     }
 
     func likely(_ call: Call) -> Bool {
@@ -68,11 +73,19 @@ final class Engine: ObservableObject {
         return lines
     }
 
+    enum Outcome { case skipped, scheduled, filed, asked, unsent }
+
+    /// Calls and texts older than this when Spamurai first sees them arrived while the Mac was asleep or closed
+    /// (the call log syncs from iCloud when it wakes). They are caught up on quietly, in one summary.
+    static let backlogAge: Double = 20 * 60
+
     /// What happens to one call or text from an unknown number: skipped as a repeat, filed, scheduled, or asked about.
-    private func decide(_ incoming: Call) async {
+    /// `quiet` records the decision without its own message, for a backlog that gets one summary instead.
+    @discardableResult
+    private func decide(_ incoming: Call, quiet: Bool = false) async -> Outcome {
         var call = incoming
-        guard let number = call.number else { return }
-        if store.toldRecently(number, before: call.ts, window: settings.repeatWindowHours * 3600) { store.record(call, "repeat"); return }
+        guard let number = call.number else { return .skipped }
+        if store.toldRecently(number, before: call.ts, window: settings.repeatWindowHours * 3600) { store.record(call, "repeat"); return .skipped }
         if call.reports == nil { call.reports = await FCCData.reportCount(number) }
         // A call the owner stayed on is never filed without asking: that may have been a real conversation.
         let talked = call.answered && call.duration >= 30
@@ -83,28 +96,58 @@ final class Engine: ObservableObject {
                 let f = DateFormatter(); f.dateFormat = "h:mm a"
                 let how = notifier.repliesByText
                     ? ["Reply 2 to stop and ignore this number", "Reply 1 to file now"] : ["Ignore the number to stop this."]
-                store.record(call, "scheduled", ref: String(due.timeIntervalSince1970))
+                store.record(call, "scheduled", ref: String(due.timeIntervalSince1970), quiet: quiet)
+                if quiet { return .scheduled }
                 do {
                     try await notifier.send((summary(call) + ["", "Filing an FCC complaint at \(f.string(from: due).lowercased())"] + how)
                         .joined(separator: "\n"), uid: call.uid)
                 } catch { lastProblem = "Could not send a notification: \((error as? FilingError)?.message ?? error.localizedDescription)" }
+                return .scheduled
             } else {
                 store.record(call, "asked")
                 refresh()
                 await file(call)
+                return .filed
             }
         } else {
+            if quiet { store.record(call, "asked", quiet: true); return .asked }
             do {
                 let how = notifier.repliesByText
                     ? ["Reply 1 to file an FCC complaint", "Reply 2 to ignore this number from now on"]
                     : ["File a complaint or ignore this number?"]
                 try await notifier.send((summary(call) + [""] + how).joined(separator: "\n"), uid: call.uid)
                 store.record(call, "asked")
+                return .asked
             } catch {
                 store.record(call, "unsent")
                 lastProblem = "Could not send a notification: \((error as? FilingError)?.message ?? error.localizedDescription)"
+                return .unsent
             }
         }
+    }
+
+    /// Decides about calls or texts the Mac learned of late, as a batch: one message says what waits and what will be filed.
+    private func catchUp(_ backlog: [Call]) async {
+        var waiting = 0, scheduled = 0
+        for call in backlog {
+            switch await decide(call, quiet: true) {
+            case .asked, .unsent: waiting += 1
+            case .scheduled: scheduled += 1
+            default: break
+            }
+        }
+        guard waiting + scheduled > 0 else { return }
+        var lines = ["Spamurai caught up on \(backlog.count) \(backlog.count == 1 ? "call or text" : "calls and texts") from while your Mac was away"]
+        if waiting > 0 {
+            lines.append("\(waiting) from unknown numbers \(waiting == 1 ? "waits" : "wait") in Spamurai for you to file or ignore.")
+        }
+        if scheduled > 0 {
+            let f = DateFormatter(); f.dateFormat = "h:mm a"
+            let due = Date().addingTimeInterval(Double(settings.graceMinutes) * 60)
+            lines.append("\(scheduled) likely \(scheduled == 1 ? "robocall or spam text" : "robocalls and spam texts") will be filed at \(f.string(from: due).lowercased()) unless you ignore \(scheduled == 1 ? "it" : "them") in Spamurai.")
+        }
+        do { try await notifier.send(lines.joined(separator: "\n")) }
+        catch { lastProblem = "Could not send a notification: \((error as? FilingError)?.message ?? error.localizedDescription)" }
     }
 
     /// For checking the text rules against recent history: how the last `days` days of texts would be sorted. Sends and files nothing.
@@ -140,6 +183,8 @@ final class Engine: ObservableObject {
         if fresh.isEmpty { return }
         let own = Set([digits10(settings.me["phone"]), digits10(notifier.handle)].compactMap { $0 })
         let known = try CallLog.contactNumbers().union(CallLog.dialedNumbers()).union(TextLog.writtenTo()).union(store.ignored()).union(own)
+        var backlog: [Call] = []
+        let now = Date().timeIntervalSince1970
         for text in fresh {
             guard let number = text.number, !known.contains(number), !text.body.isEmpty, !TextLog.looksLikeCode(text.body) else {
                 var skipped = text
@@ -147,8 +192,9 @@ final class Engine: ObservableObject {
                 store.record(skipped, text.number == nil ? "no-number" : "known")
                 continue
             }
-            await decide(text)
+            if now - text.ts > Engine.backlogAge { backlog.append(text) } else { await decide(text) }
         }
+        await catchUp(backlog)
     }
 
     // MARK: The watch loop
@@ -156,16 +202,20 @@ final class Engine: ObservableObject {
     func tick() async {
         let now = Date().timeIntervalSince1970
         do {
-            let after = Double(store.get("watermark") ?? "") ?? now
-            let new = try CallLog.incoming(since: after)
-            if let newest = new.map(\.ts).max() { store.set("watermark", String(newest)) }
+            // The call log syncs from iCloud in its own time, and not in order, so look back a few days behind the
+            // newest call seen and let the history table say which calls are new.
+            let watermark = Double(store.get("watermark") ?? "") ?? now
+            let new = try CallLog.incoming(since: store.get("watermark") == nil ? now : watermark - 3 * 86400)
+            if let newest = new.map(\.ts).max(), newest > watermark { store.set("watermark", String(newest)) }
             else if store.get("watermark") == nil { store.set("watermark", String(now)) }
             access = "ok"
             let todo = new.filter { !store.seen($0.uid) }
             let retry = store.calls(where: "status='unsent'")
             if !todo.isEmpty || !retry.isEmpty {
                 let known = try CallLog.contactNumbers().union(CallLog.dialedNumbers()).union(store.ignored())
-                for call in retry + todo.filter({ $0.number != nil && !known.contains($0.number!) }) { await decide(call) }
+                let unknown = todo.filter { $0.number != nil && !known.contains($0.number!) }
+                for call in retry + unknown.filter({ now - $0.ts <= Engine.backlogAge }) { await decide(call) }
+                await catchUp(unknown.filter { now - $0.ts > Engine.backlogAge })
                 for call in todo where !store.seen(call.uid) { store.record(call, call.number == nil ? "no-number" : "known") }
             }
             if settings.watchTexts { try await checkTexts() }
@@ -193,7 +243,7 @@ final class Engine: ObservableObject {
     func answer(_ choice: String, uid: String? = nil) async {
         let open: [Call]
         if let uid { open = store.calls(where: "uid=? and status in ('asked','scheduled','link')", [uid]) }
-        else { open = store.calls(where: "status in ('asked','scheduled') and noted > ?", [Date().timeIntervalSince1970 - 2 * 86400], order: "noted") }
+        else { open = store.calls(where: "status in ('asked','scheduled') and quiet = 0 and noted > ?", [Date().timeIntervalSince1970 - 2 * 86400], order: "noted") }
         guard let call = open.last else { return }
         if call.uid.hasPrefix("test-") { await finishTest(call, choice); return }
         if choice == "2" {

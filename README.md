@@ -107,6 +107,20 @@ date, time and number filled in through the form's address, types in your detail
 attestation box and presses Submit. If the site shows a check that needs a person, filing stops and the
 app tells you; "Show Form" in the app shows the page.
 
+## A Mac that sleeps
+
+Spamurai does not need the Mac to stay on. When it wakes, the iPhone's call log and texts sync from
+iCloud and Spamurai catches up in one go:
+
+- Calls and texts that arrived while the Mac was away are never asked about one by one. Unknown
+  numbers go straight to **Needs your answer** in the window, where you file or ignore each one.
+- Likely robocalls and spam texts are still filed on their own (if you allowed that), after the usual
+  waiting time from the moment the Mac wakes, so you can stop any of them first.
+- You get one message or notification that says how many are waiting and how many are about to be
+  filed. A typed `1` or `2` never applies to these; only to a question Spamurai actually sent you.
+
+Switch on *Open Spamurai when I log in* in Setup so it is running whenever the Mac is.
+
 ## Privacy
 
 Everything stays on your Mac: settings in `~/Library/Application Support/Spamurai/config.json`,

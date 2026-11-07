@@ -238,6 +238,8 @@ final class Store {
         let have = Set(try db.rows("pragma table_info(calls)").compactMap { $0[1] as? String })
         if !have.contains("kind") { try db.rows("alter table calls add column kind text default 'call'") }
         if !have.contains("body") { try db.rows("alter table calls add column body text default ''") }
+        // 1 when no question was sent about it (caught up on after the Mac was away): a typed reply never applies to it.
+        if !have.contains("quiet") { try db.rows("alter table calls add column quiet int default 0") }
     }
 
     func get(_ key: String) -> String? { (try? db.rows("select v from meta where k=?", [key]))?.first?[0] as? String }
@@ -250,11 +252,11 @@ final class Store {
                         [number, ts - window, ts])) ?? []).isEmpty
     }
 
-    func record(_ call: Call, _ status: String, ref: String? = nil) {
-        _ = try? db.rows("insert or replace into calls (uid, number, ts, answered, duration, reports, status, noted, caller_name, ref, kind, body) " +
-                         "values (?,?,?,?,?,?,?,?,?,?,?,?)",
+    func record(_ call: Call, _ status: String, ref: String? = nil, quiet: Bool = false) {
+        _ = try? db.rows("insert or replace into calls (uid, number, ts, answered, duration, reports, status, noted, caller_name, ref, kind, body, quiet) " +
+                         "values (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                          [call.uid, call.number, call.ts, call.answered, call.duration, call.reports, status,
-                          Date().timeIntervalSince1970, call.callerName, ref, call.kind, call.body])
+                          Date().timeIntervalSince1970, call.callerName, ref, call.kind, call.body, quiet ? 1 : 0])
     }
 
     func calls(where clause: String, _ binds: [Any?] = [], order: String = "ts") -> [Call] {
