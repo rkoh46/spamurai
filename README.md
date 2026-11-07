@@ -18,7 +18,7 @@ how many FCC complaints already name that number, then either files a complaint 
 
 ## Install
 
-1. Download `Spamurai-2.1.dmg` from the [Releases page](https://github.com/rkoh46/spamurai/releases).
+1. Download `Spamurai-2.2.dmg` from the [Releases page](https://github.com/rkoh46/spamurai/releases).
 2. Open it and drag Spamurai to Applications.
 3. Open Spamurai. It is not signed with a paid Apple developer certificate, so the first time macOS
    says it cannot verify the app: open System Settings, Privacy & Security, scroll down and press
@@ -74,7 +74,7 @@ With Xcode installed:
     ./build.sh
     open ~/Applications/Spamurai.app
 
-`./release.sh 2.1` makes the DMG in `dist/`.
+`./release.sh 2.2` makes the DMG in `dist/`.
 
 ## How it decides
 
