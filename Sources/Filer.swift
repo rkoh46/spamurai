@@ -208,9 +208,11 @@ final class Filer: NSObject, WKNavigationDelegate {
                 if url.contains("/signin") { throw FilingError(message: "the FCC site asked for a sign-in") }
                 return "accepted"
             }
-            // Still on the form: look for the form's own error messages.
-            let errors = (try? await js("[...document.querySelectorAll('[role=alert], [data-garden-id=\"forms.input_message\"][data-validation=\"error\"], .notification-error')].map(e => e.innerText.trim()).filter(Boolean).slice(0, 4).join('; ')") as? String) ?? ""
-            if !errors.isEmpty { throw FilingError(message: "the form answered: \(errors)") }
+            // Still on the form: the site confirms an anonymous complaint with a banner on the same page
+            // ("Your request was successfully submitted."), and reports problems the same way.
+            let notices = (try? await js("[...document.querySelectorAll('[role=alert], [data-garden-id=\"forms.input_message\"][data-validation=\"error\"], .notification-error, .notification-success')].map(e => e.innerText.trim()).filter(Boolean).slice(0, 4).join('; ')") as? String) ?? ""
+            if notices.localizedCaseInsensitiveContains("successfully submitted") { return "accepted" }
+            if !notices.isEmpty { throw FilingError(message: "the form answered: \(notices)") }
         }
         throw FilingError(message: "the form did not confirm within a minute")
     }
