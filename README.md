@@ -28,13 +28,37 @@ The app opens on its Setup page, with a checklist at the top:
 
 1. **Your details.** The FCC requires a name, address, email and phone number on every complaint.
 2. **Your answers about the calls.** The form asks what kind of call it was. You choose the answers once.
-3. **How Spamurai asks you.** An iMessage to yourself (reply `1` to file, `2` to ignore), a
-   notification on the Mac with File and Ignore buttons, or nothing at all: callers it is unsure about
-   then wait on the Calls page until you file or ignore them there. For iMessage, send yourself one
-   message from the Mac first; Setup has a button for it. **Send a Test Question** proves the round
-   trip without filing anything.
+3. **How Spamurai asks you.** Pick one under *Asking you*:
+   - **An iMessage to myself.** The question arrives on your iPhone as a message, and you reply `1`
+     to file or `2` to ignore the number. See the steps below.
+   - **A notification on this Mac**, with File and Ignore buttons.
+   - **Nothing.** Callers Spamurai is unsure about wait on the Calls page until you file or ignore
+     them there.
 4. **Access to your calls.** macOS only lets apps with Full Disk Access read the call log and your
    replies in Messages. Setup opens the right list; switch Spamurai on, then quit and reopen it.
+
+### Setting up the iMessage questions
+
+Spamurai sends the questions from Messages on your Mac to one of your own iMessage addresses, and
+reads your `1` or `2` from the Messages history on the Mac. Nothing goes through any server but
+Apple's. For it to work:
+
+1. **Messages on the Mac must be signed in to your Apple Account**, the same one as your iPhone
+   (Messages, Settings, iMessage). Text Message Forwarding is not needed.
+2. **Choose the address.** In Setup, *My iMessage address* starts out as your cell number, which
+   works. If your Apple Account also has an **email address** turned on for iMessage (iPhone:
+   Settings, Messages, Send & Receive), enter that instead: the questions and your replies then get a
+   conversation of their own, instead of landing in the you-to-you thread where every message appears
+   twice.
+3. **Send yourself one message at that address** from the Mac, any text, so the conversation
+   exists. Setup shows an *Open Messages* button until it does.
+4. **Press Send a Test Question.** The first time, macOS asks whether Spamurai may control Messages:
+   allow it. A test question appears on your iPhone; reply `2`. Within a few seconds Spamurai answers
+   "Test passed" in the same conversation and shows it in Setup. The test is about a made-up call
+   and files nothing.
+
+Only a reply that is exactly `1` or `2`, sent while a question is open, counts. Anything else you
+write in that conversation is ignored.
 
 Spamurai keeps watching from the menu bar after you close its window. Setup has a switch to open it
 when you log in.

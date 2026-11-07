@@ -488,7 +488,7 @@ struct SetupView: View {
                 }
             } header: { head("Asking you", "message.fill", .green) } footer: {
                 Text(settings.notifyKind == "imessage"
-                     ? "The question reaches your iPhone as a message from yourself. Reply 1 to file or 2 to ignore. Leave the address empty to use your cell number. The test asks about a made-up call and files nothing."
+                     ? "Spamurai writes to this address from Messages on this Mac, and the question shows up on your iPhone. Reply 1 to file or 2 to ignore. Your cell number works. If your Apple Account also has an email address for iMessage (iPhone: Settings, Messages, Send & Receive), that is the tidier choice: the questions and your replies get a conversation of their own instead of mixing with the copies of your own messages. Send yourself one message at the address first so the conversation exists, then press Send a Test Question. It asks about a made-up call and files nothing."
                      : settings.notifyKind == "mac" ? "The notification has File and Ignore buttons. The test asks about a made-up call and files nothing."
                      : "Spamurai stays quiet. Callers it is unsure about wait on the Calls page, where you file or ignore them. The menu bar icon shows how many are waiting.")
             }
