@@ -465,8 +465,11 @@ struct SetupView: View {
                     Text("Nothing, I'll check Spamurai").tag("none")
                 }
                 if settings.notifyKind == "imessage" {
-                    TextField("My iMessage address", text: Binding(get: { settings.imessageTo }, set: { settings.imessageTo = $0; settings.save(); hasThread = engine.notifier.selfThread() != nil }),
-                              prompt: Text(dashed(settings.me["phone"]).isEmpty ? "Number or Apple Account email" : "\(dashed(settings.me["phone"])), or an Apple Account email"))
+                    // Shows the cell number until the owner types another address; the placeholder never contains their details.
+                    TextField("My iMessage address",
+                              text: Binding(get: { settings.imessageTo.isEmpty ? dashed(settings.me["phone"]) : settings.imessageTo },
+                                            set: { settings.imessageTo = $0; settings.save(); hasThread = engine.notifier.selfThread() != nil }),
+                              prompt: Text("Enter your number or Apple Account email"))
                     if !hasThread {
                         LabeledContent {
                             Button("Open Messages") { engine.notifier.openSelfThread() }
