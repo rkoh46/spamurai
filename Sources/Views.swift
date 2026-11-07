@@ -505,6 +505,9 @@ struct SetupView: View {
                     do { if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() } } catch {}
                     atLogin = SMAppService.mainApp.status == .enabled
                 }))
+                LabeledContent("Version") {
+                    Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "").monospacedDigit()
+                }
             } header: { head("This Mac", "macbook", .gray) } footer: {
                 Text(engine.access == "ok" ? "Calls sync from your iPhone when it uses the same Apple Account as this Mac. Spamurai keeps watching from the menu bar after you close this window."
                      : "macOS only lets apps with Full Disk Access read the calls your iPhone syncs to this Mac, and your replies in Messages. Switch Spamurai on in the list (press + and choose it if it is not there), then quit and reopen Spamurai.")
